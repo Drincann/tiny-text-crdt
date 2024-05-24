@@ -9,14 +9,16 @@ const assert = (condition: boolean, message: string) => {
 }
 
 const cases: { run: () => void }[] = [
-  { run: shouldInsertAndMoveOnSingleNode },
-  { run: cursorShouldConstructOpForPeer },
-  { run: shouldConsistentlyInsertOnTwoReplicas },
-  { run: shouldConsistentlyInsertOnThreeReplicas },
-  { run: shouldDeleteLocalText }
+  { run: testSingleReplicaInsertAndMove },
+  { run: testCursorConstructsOperationForPeer },
+  { run: testConsistentInsertionOnTwoReplicas },
+  { run: testConsistentInsertionOnThreeReplicas },
+  { run: testLocalDeletion },
+  { run: testIgnoringDeletionOfUnawareText },
+  { run: testAwaitingDeletionIfVersionVectorIsLessThanPeer },
 ]
 
-function shouldInsertAndMoveOnSingleNode() {
+function testSingleReplicaInsertAndMove() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
 
   const cursor1 = peer1.cursor();
@@ -44,7 +46,7 @@ function shouldInsertAndMoveOnSingleNode() {
   assert(result === 'Hello World!', `shouldInsertAndMoveOnSingleNode failed: expected 'Hello World!', got '${result}'`);
 }
 
-function cursorShouldConstructOpForPeer() {
+function testCursorConstructsOperationForPeer() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
   const cursor1 = peer1.cursor();
 
@@ -60,7 +62,7 @@ function cursorShouldConstructOpForPeer() {
 }
 
 // two replicas 
-function shouldConsistentlyInsertOnTwoReplicas() {
+function testConsistentInsertionOnTwoReplicas() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
   const peer2 = new CrdtReplica({ id: 'peer2' });
 
@@ -96,7 +98,7 @@ function shouldConsistentlyInsertOnTwoReplicas() {
 // peer2 -> peer1 <space>
 // peer2 -> peer3 <space>
 // result: "Hello World!"
-function shouldConsistentlyInsertOnThreeReplicas() {
+function testConsistentInsertionOnThreeReplicas() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
   const peer2 = new CrdtReplica({ id: 'peer2' });
 
@@ -180,7 +182,7 @@ function shouldConsistentlyInsertOnThreeReplicas() {
   assert(peer3.toString() === 'Hello World!', `shouldConsistentlyInsertOnThreeReplicas failed: expected 'Hello World!', got ${peer3.toString()}`);
 }
 
-function shouldDeleteLocalText() {
+function testLocalDeletion() {
   const peer = new CrdtReplica({ id: 'peer' });
   const cursor = peer.cursor();
   
@@ -207,6 +209,139 @@ function shouldDeleteLocalText() {
   cursor.delete(10);;
   
   assert(peer.toString() === '', `shouldDeleteLocalText failed: remove 'll', expected '', got ${peer.toString()}`);
+}
+
+// peer1: H e l l o <space>
+// peer2: W o r l d !
+// peer1 -> peer2 H e l l o <space>
+// peer2 -> peer1 W o r l d !
+// peer1 -> peer3 H e l
+// peer2 -> peer3 W o r
+// peer3: delete e to o (H e l W o r)
+//                         ^ ^ ^ ^
+// peer3 -> peer1 delete e to o
+// peer3 -> peer2 delete e to o
+// peer1 -> peer3 l o <space>
+// peer2 -> peer3 l d !
+// result: "Hlo rld!"
+function testIgnoringDeletionOfUnawareText() {
+  const peer1 = new CrdtReplica({ id: 'peer1' });
+  const peer2 = new CrdtReplica({ id: 'peer2' });
+  const peer3 = new CrdtReplica({ id: 'peer3' });
+  
+  const peer1Ops = []
+  const peer2Ops = []
+  const peer3Ops = []
+
+  const cursor1 = peer1.cursor();
+  const cursor2 = peer2.cursor();
+  const cursor3 = peer3.cursor();
+  
+  // peer1: H e l l o <space>
+  peer1Ops.push(cursor1.insert('H'));
+  peer1Ops.push(cursor1.insert('e'));
+  peer1Ops.push(cursor1.insert('l'));
+  peer1Ops.push(cursor1.insert('l'));
+  peer1Ops.push(cursor1.insert('o'));
+  peer1Ops.push(cursor1.insert(' '));
+  
+  // peer2: W o r l d !
+  peer2Ops.push(cursor2.insert('W'));
+  peer2Ops.push(cursor2.insert('o'));
+  peer2Ops.push(cursor2.insert('r'));
+  peer2Ops.push(cursor2.insert('l'));
+  peer2Ops.push(cursor2.insert('d'));
+  peer2Ops.push(cursor2.insert('!'));
+  
+  // peer1 -> peer2 H e l l o <space>
+  peer1Ops.forEach(op => peer2.applyRemote(op));
+  // peer2 -> peer1 W o r l d !
+  peer2Ops.forEach(op => peer1.applyRemote(op));
+  
+  // peer1 -> peer3 H e l
+  peer1Ops.slice(0, 3).forEach(op => peer3.applyRemote(op));
+  
+  // peer2 -> peer3 W o r
+  peer2Ops.slice(0, 3).forEach(op => peer3.applyRemote(op));
+
+  // peer3: delete e to o (H e l W o r)
+  //                         ^ ^ ^ ^
+  cursor3.move(2)
+  peer3Ops.push(cursor3.delete(4));
+
+  // peer3 -> peer1 delete e to o
+  peer3Ops.forEach(op => peer1.applyRemote(op));
+  
+  // peer3 -> peer2 delete e to o
+  peer3Ops.forEach(op => peer2.applyRemote(op));
+
+  // peer1 -> peer3 l o <space>
+  peer1Ops.slice(3).forEach(op => peer3.applyRemote(op));
+  
+  // peer2 -> peer3 l d !
+  peer2Ops.slice(3).forEach(op => peer3.applyRemote(op));
+  
+  assert(peer1.toString() === 'Hlo rld!', `shouldNotDeleteTextPeerNotAwareOf failed: peer1 expected 'Hlo rld!', got ${peer1.toString()}`);
+  assert(peer2.toString() === 'Hlo rld!', `shouldNotDeleteTextPeerNotAwareOf failed: peer2 expected 'Hlo rld!', got ${peer2.toString()}`);
+  assert(peer3.toString() === 'Hlo rld!', `shouldNotDeleteTextPeerNotAwareOf failed: peer3 expected 'Hlo rld!', got ${peer3.toString()}`);
+}
+
+// peer1: H e l l o <space>
+// peer2: W o r l d !
+// peer1 -> peer2 H e
+// peer2 -> peer1 W o r l d !
+// peer1: deoete e to d (H e l l o <space> W o r l d !)
+//                         ^ ^ ^ ^    ^    ^ ^ ^ ^ ^
+// peer1 -> peer2 delete e to d
+// assert peer1 == 'H!'
+// assert peer2 == 'HeWorld!
+// peer1 -> peer2 l l o <space>
+// assert peer2 == 'H!'
+function testAwaitingDeletionIfVersionVectorIsLessThanPeer() {
+  const peer1 = new CrdtReplica({ id: 'peer1' });
+  const peer2 = new CrdtReplica({ id: 'peer2' });
+  
+  const peer1Ops = []
+  const peer2Ops = []
+
+  const cursor1 = peer1.cursor();
+  const cursor2 = peer2.cursor();
+
+  // peer1: H e l l o <space>
+  peer1Ops.push(cursor1.insert('H'));
+  peer1Ops.push(cursor1.insert('e'));
+  peer1Ops.push(cursor1.insert('l'));
+  peer1Ops.push(cursor1.insert('l'));
+  peer1Ops.push(cursor1.insert('o'));
+  peer1Ops.push(cursor1.insert(' '));
+
+  // peer2: W o r l d !
+  peer2Ops.push(cursor2.insert('W'));
+  peer2Ops.push(cursor2.insert('o'));
+  peer2Ops.push(cursor2.insert('r'));
+  peer2Ops.push(cursor2.insert('l'));
+  peer2Ops.push(cursor2.insert('d'));
+  peer2Ops.push(cursor2.insert('!'));
+
+  // peer1 -> peer2 H e
+  peer1Ops.slice(0, 2).forEach(op => peer2.applyRemote(op));
+  // peer2 -> peer1 W o r l d !
+  peer2Ops.forEach(op => peer1.applyRemote(op));
+
+  // peer1: delete e to d (H e l l o <space> W o r l d !)
+  cursor1.move(-4);
+  peer1Ops.push(cursor1.delete(10));
+
+  // peer1 -> peer2 delete e to d
+  peer1Ops.slice(6).forEach(op => peer2.applyRemote(op));
+
+  assert(peer1.toString() === 'H!', `shouleAwaitDeletionIfCurrentVersionVectorIsLessThanPeer failed: peer1 expected 'H!', got ${peer1.toString()}`);
+  assert(peer2.toString() === 'HeWorld!', `shouleAwaitDeletionIfCurrentVersionVectorIsLessThanPeer failed: peer2 expected 'HeWorld!', got ${peer2.toString()}`);
+  
+  // peer1 -> peer2 l l o <space>
+  peer1Ops.slice(2).forEach(op => peer2.applyRemote(op));
+
+  assert(peer2.toString() === 'H!', `shouleAwaitDeletionIfCurrentVersionVectorIsLessThanPeer failed: peer2 expected 'H!', got ${peer2.toString()}`);
 }
 
 function getFunName(fun: () => void): string {

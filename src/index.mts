@@ -61,7 +61,22 @@ export class CrdtReplica {
   }
 
   private applyRemoteDeletion(deletion: RemoteDeletion): void {
+    let end = this.findAnchorEq(deletion.between.end);
+    for (
+      let iter = this.findAnchorEq(deletion.between.begin);
+      iter != undefined && iter !== end;
+      iter = iter.next
+    ) {
+      const peerVersion = deletion.version[iter.anchor.replicaId];
+      if (iter.anchor.n > peerVersion) continue;
 
+      iter.isDeleted = true;
+    }
+
+    if (end != undefined) {
+      if (end.anchor.n > deletion.version[end.anchor.replicaId]) return;
+      end.isDeleted = true;
+    }
   }
 
   private findRightFirstLte(
@@ -164,25 +179,25 @@ export class CrdtReplica {
   }
 
   private tryApplyBlocked(): void {
-    for (const blockedOperation of this.blockedOperations) {
-      if (this.checkState(blockedOperation)) {
-      }
-    }
+    const willApply: DeliveredOperation[] = this.blockedOperations.filter(this.checkState.bind(this));
+    this.blockedOperations = this.blockedOperations.filter((operation) => !this.checkState(operation));
+    willApply.forEach(this.applyRemote.bind(this));
   }
 
   private checkState(operation: DeliveredOperation): boolean {
     if (operation.type === 'delete') {
-      if (!this.vectorGte(operation.version, this.versionVector)) {
-        return false;
+      if (this.vectorGte(this.versionVector, operation.version)) {
+        return true;
       }
+      return false;
     }
 
     return true;
   }
 
   private vectorGte(a: VersionVector, b: VersionVector): boolean {
-    return Object.entries(b).every(([replicaId, lamport]) => {
-      return a[replicaId] != undefined && a[replicaId] >= lamport;
+    return Object.entries(b).filter(([, n]) => n != -1).every(([replicaId, n]) => {
+      return a[replicaId] != undefined && a[replicaId] >= n;
     });
   }
 
