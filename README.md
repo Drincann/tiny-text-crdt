@@ -55,7 +55,7 @@ console.log(peer2.toString()); // 'ABC'
 
 ## License
 
-DWTFYW (Do What The F*ck You Want) Public License
+WTFPL (Do What The F*ck You Want To Public License)
 
 ```
         DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
