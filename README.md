@@ -18,7 +18,7 @@ $ npm test
 ## Features
 
 - [x] Insert characters
-- [ ] Delete characters
+- [x] Delete characters
 - [ ] Undo/Redo
 - [ ] Network API
 - [ ] Web UI example
