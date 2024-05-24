@@ -21,7 +21,7 @@ const cases: { run: () => void }[] = [
 function testSingleReplicaInsertAndMove() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
 
-  const cursor1 = peer1.cursor();
+  const cursor1 = peer1.localCursor();
 
   cursor1.insert('H');
   cursor1.insert('l');
@@ -48,7 +48,7 @@ function testSingleReplicaInsertAndMove() {
 
 function testCursorConstructsOperationForPeer() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
-  const cursor1 = peer1.cursor();
+  const cursor1 = peer1.localCursor();
 
   const IHOp = cursor1.insert('H');
   assert(IHOp.value === 'H', `cursorShouldConstructOpForPeer failed: insert value, expected 'H', got '${IHOp.value}'`);
@@ -66,8 +66,8 @@ function testConsistentInsertionOnTwoReplicas() {
   const peer1 = new CrdtReplica({ id: 'peer1' });
   const peer2 = new CrdtReplica({ id: 'peer2' });
 
-  const cursor1 = peer1.cursor();
-  const cursor2 = peer2.cursor();
+  const cursor1 = peer1.localCursor();
+  const cursor2 = peer2.localCursor();
 
   const peer1Op1 = cursor1.insert('A');
   const peer2Op1 = cursor2.insert('C');
@@ -105,8 +105,8 @@ function testConsistentInsertionOnThreeReplicas() {
   const peer1Ops = []
   const peer2Ops = []
 
-  const cursor1 = peer1.cursor();
-  const cursor2 = peer2.cursor();
+  const cursor1 = peer1.localCursor();
+  const cursor2 = peer2.localCursor();
 
   // peer1: H e
   peer1Ops.push(cursor1.insert('H'));
@@ -132,7 +132,7 @@ function testConsistentInsertionOnThreeReplicas() {
 
   const peer3 = new CrdtReplica({ id: 'peer3' });
   const peer3Ops = [];
-  const cursor3 = peer3.cursor();
+  const cursor3 = peer3.localCursor();
 
   // peer3: W o r l d !
   peer3Ops.push(cursor3.insert('W'));
@@ -184,7 +184,7 @@ function testConsistentInsertionOnThreeReplicas() {
 
 function testLocalDeletion() {
   const peer = new CrdtReplica({ id: 'peer' });
-  const cursor = peer.cursor();
+  const cursor = peer.localCursor();
   
   cursor.insert('H');
   cursor.insert('e');
@@ -233,9 +233,9 @@ function testIgnoringDeletionOfUnawareText() {
   const peer2Ops = []
   const peer3Ops = []
 
-  const cursor1 = peer1.cursor();
-  const cursor2 = peer2.cursor();
-  const cursor3 = peer3.cursor();
+  const cursor1 = peer1.localCursor();
+  const cursor2 = peer2.localCursor();
+  const cursor3 = peer3.localCursor();
   
   // peer1: H e l l o <space>
   peer1Ops.push(cursor1.insert('H'));
@@ -304,8 +304,8 @@ function testAwaitingDeletionIfVersionVectorIsLessThanPeer() {
   const peer1Ops = []
   const peer2Ops = []
 
-  const cursor1 = peer1.cursor();
-  const cursor2 = peer2.cursor();
+  const cursor1 = peer1.localCursor();
+  const cursor2 = peer2.localCursor();
 
   // peer1: H e l l o <space>
   peer1Ops.push(cursor1.insert('H'));

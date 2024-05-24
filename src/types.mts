@@ -24,6 +24,7 @@ export interface RemoteInsertion {
 export interface LocalInsertion {
   type: 'insert';
   value: string;
+
   insertAfter: TextAnchor;
 }
 
@@ -49,4 +50,11 @@ export interface TextAnchor extends ReplicaVersion {
 
 export interface VersionVector {
   [replicaId: string]: number;
+}
+
+export interface Cursor {
+  insert(value: string): RemoteInsertion;
+  delete(count: number): RemoteDeletion;
+
+  move(offset: number): Cursor;
 }
