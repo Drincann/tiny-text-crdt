@@ -1,4 +1,4 @@
-# text CRDT for real-time collaborative editing
+# Text CRDT for real-time collaborative editing
 
 This repository contains a simple implementation of a text CRDT (Conflict-Free Replicated Data Type) designed for real-time collaborative editing.
 
