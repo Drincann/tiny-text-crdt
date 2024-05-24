@@ -1,6 +1,6 @@
 // import process
 import process from 'node:process';
-import { RemoteInsertion, RemoteDeletion, Document, DeliveredOperation, TextNode, ReplicaVersion, TextAnchor, LocalOperation, LocalInsertion, LocalDeletion } from './types.mjs';
+import { RemoteInsertion, RemoteDeletion, Document, DeliveredOperation, TextNode, ReplicaVersion, TextAnchor, LocalOperation, LocalInsertion, LocalDeletion, VersionVector } from './types.mjs';
 
 interface Cursor {
   insert(value: string): RemoteInsertion;
@@ -15,6 +15,7 @@ export class CrdtReplica {
   private textCounter: number;
   private document: Document;
   private blockedOperations: DeliveredOperation[];
+  private versionVector: VersionVector;
 
   constructor({ id, stateZero }: { id?: string, stateZero?: TextNode }) {
     this.id = id ?? Math.random().toString(36).slice(2);
@@ -22,6 +23,7 @@ export class CrdtReplica {
     this.textCounter = 0;
     this.document = stateZero ?? { __isVirtual: true, value: '', anchor: { replicaId: 'root', lamport: -1, n: -1 } };
     this.blockedOperations = [];
+    this.versionVector = { [this.id]: -1 };
   }
 
   public applyRemote(operation: DeliveredOperation): undefined {
@@ -37,6 +39,7 @@ export class CrdtReplica {
   }
 
   private applyRemoteInsertion(insertion: RemoteInsertion): void {
+    this.versionVector[insertion.inserted.replicaId] = insertion.inserted.n;
     const newNode: TextNode = {
       value: insertion.value,
       anchor: insertion.inserted,
@@ -76,7 +79,7 @@ export class CrdtReplica {
     }
 
 
-    while (this.versionGt(iterNext.anchor, target)) {
+    while (this.orderGt(iterNext.anchor, target)) {
       if (iterNext.next == undefined) {
         return iterNext;
       }
@@ -87,7 +90,7 @@ export class CrdtReplica {
     return iter;
   }
 
-  private versionGt(a: ReplicaVersion, b: ReplicaVersion): boolean {
+  private orderGt(a: ReplicaVersion, b: ReplicaVersion): boolean {
     return a.lamport === b.lamport
       ? a.replicaId < b.replicaId // dictionary order
       : a.lamport > b.lamport
@@ -105,10 +108,7 @@ export class CrdtReplica {
       this.applyLocalDeletion(operation);
       return {
         ...operation,
-        version: {
-          replicaId: this.id,
-          lamport: this.lamport
-        }
+        version: this.versionVector
       }
     }
 
@@ -118,9 +118,10 @@ export class CrdtReplica {
 
 
   private applyLocalInsertion(insertion: LocalInsertion): TextAnchor {
+    this.versionVector[this.id] = ++this.textCounter;
     const newAnchor = {
       replicaId: this.id,
-      n: ++this.textCounter,
+      n: this.versionVector[this.id],
       lamport: this.lamport++
     };
 
@@ -148,7 +149,18 @@ export class CrdtReplica {
 
 
   private applyLocalDeletion(deletion: LocalDeletion) {
+    let end = this.findAnchorEq(deletion.between.end);
+    for (
+      let iter = this.findAnchorEq(deletion.between.begin);
+      iter != undefined && iter !== end;
+      iter = iter.next
+    ) {
+      iter.isDeleted = true;
+    }
 
+    if (end != undefined) {
+      end.isDeleted = true;
+    }
   }
 
   private tryApplyBlocked(): void {
@@ -159,26 +171,8 @@ export class CrdtReplica {
   }
 
   private checkState(operation: DeliveredOperation): boolean {
-    if (operation.type === 'insert') {
-      if (operation.inserted.lamport - 1 > this.lamport) {
-        return false;
-      }
-
-      const textNode = this.findAnchorEq(operation.insertAfter);
-      if (textNode == undefined) {
-        return false;
-      }
-    }
-
     if (operation.type === 'delete') {
-      if (operation.version.lamport - 1 > this.lamport) {
-        return false;
-      }
-
-      const localBegin = this.findAnchorEq(operation.between.begin);
-      const localEnd = this.findAnchorEq(operation.between.end);
-
-      if (localBegin == undefined || localEnd == undefined) {
+      if (!this.vectorGte(operation.version, this.versionVector)) {
         return false;
       }
     }
@@ -186,7 +180,15 @@ export class CrdtReplica {
     return true;
   }
 
-  findAnchorEq(insertAfter: TextAnchor): TextNode | undefined {
+  private vectorGte(a: VersionVector, b: VersionVector): boolean {
+    return Object.entries(b).every(([replicaId, lamport]) => {
+      return a[replicaId] != undefined && a[replicaId] >= lamport;
+    });
+  }
+
+  findAnchorEq(insertAfter?: TextAnchor): TextNode | undefined {
+    if (insertAfter == undefined) return undefined;
+
     for (
       let iter: TextNode | undefined = this.document;
       iter != undefined;
@@ -206,25 +208,27 @@ export class CrdtReplica {
     }
 
     if (segment.next == undefined) {
-      return segment.value;
+      return segment.isDeleted ? '' : segment.value;
     }
 
-    return segment.value + this.toString(segment.next);
+    return (segment.isDeleted ? '' : segment.value) + this.toString(segment.next);
   }
 
   public cursor(): Cursor {
     let position: TextNode = this.document;
 
-    const search = (offset: number): TextNode => {
+    const _move = (offset: number): TextNode => {
       let iter = position;
       while (offset != 0) {
         if (offset > 0) {
           if (iter.next == undefined) return iter;
           iter = iter.next;
+          if (iter.isDeleted) continue;
           offset--;
         } else {
           if (iter.prev == undefined) return iter;
           iter = iter.prev;
+          if (iter.isDeleted) continue;
           offset++;
         }
       }
@@ -250,7 +254,15 @@ export class CrdtReplica {
         return operation as RemoteInsertion;
       },
       delete: (count: number): RemoteDeletion => {
-        const end = search(count);
+        let begin = position;
+        let end = _move(count - 1);
+        if (begin.__isVirtual && begin.next != undefined) {
+          begin = _move(1);
+        }
+        if (end.__isVirtual && end.next != undefined) {
+          end = _move(1);
+        }
+
         const operation = this.applyLocal({
           type: 'delete',
           between: {
@@ -268,7 +280,7 @@ export class CrdtReplica {
 
       },
       move: (offset: number): Cursor => {
-        position = search(offset);
+        position = _move(offset);
         return cursorSelf;
       }
     }

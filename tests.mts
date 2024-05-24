@@ -12,7 +12,8 @@ const cases: { run: () => void }[] = [
   { run: shouldInsertAndMoveOnSingleNode },
   { run: cursorShouldConstructOpForPeer },
   { run: shouldConsistentlyInsertOnTwoReplicas },
-  { run: shouldConsistentlyInsertOnThreeReplicas }
+  { run: shouldConsistentlyInsertOnThreeReplicas },
+  { run: shouldDeleteLocalText }
 ]
 
 function shouldInsertAndMoveOnSingleNode() {
@@ -177,6 +178,35 @@ function shouldConsistentlyInsertOnThreeReplicas() {
   assert(peer1.toString() === 'Hello World!', `shouldConsistentlyInsertOnThreeReplicas failed: expected 'Hello World!', got ${peer1.toString()}`);
   assert(peer2.toString() === 'Hello World!', `shouldConsistentlyInsertOnThreeReplicas failed: expected 'Hello World!', got ${peer2.toString()}`);
   assert(peer3.toString() === 'Hello World!', `shouldConsistentlyInsertOnThreeReplicas failed: expected 'Hello World!', got ${peer3.toString()}`);
+}
+
+function shouldDeleteLocalText() {
+  const peer = new CrdtReplica({ id: 'peer' });
+  const cursor = peer.cursor();
+  
+  cursor.insert('H');
+  cursor.insert('e');
+  cursor.insert('l');
+  cursor.insert('l');
+  cursor.insert('o');
+  
+  cursor.delete(1);
+
+  assert(peer.toString() === 'Hell', `shouldDeleteLocalText failed: remove 'o', expected 'Hell', got ${peer.toString()}`);
+  
+  cursor.move(-4);
+  cursor.delete(1);
+  
+  assert(peer.toString() === 'ell', `shouldDeleteLocalText failed: remove 'H', expected 'ell', got ${peer.toString()}`);
+  
+  cursor.move(-10);
+  cursor.delete(1);
+  
+  assert(peer.toString() === 'll', `shouldDeleteLocalText failed: remove 'e', expected 'll', got ${peer.toString()}`);
+  
+  cursor.delete(10);;
+  
+  assert(peer.toString() === '', `shouldDeleteLocalText failed: remove 'll', expected '', got ${peer.toString()}`);
 }
 
 function getFunName(fun: () => void): string {

@@ -6,13 +6,12 @@ export interface RemoteDeletion {
 
   between: { begin: TextAnchor; end: TextAnchor; };
 
-  version: ReplicaVersion;
+  version: VersionVector;
 }
 export interface LocalDeletion {
   type: 'delete';
 
   between: { begin: TextAnchor; end: TextAnchor; };
-
 }
 
 export interface RemoteInsertion {
@@ -31,6 +30,8 @@ export interface LocalInsertion {
 export type Document = TextNode;
 export interface TextNode {
   __isVirtual?: boolean;
+  isDeleted?: boolean;
+
   value: string;
   anchor: TextAnchor;
 
@@ -44,4 +45,8 @@ export interface ReplicaVersion {
 }
 export interface TextAnchor extends ReplicaVersion {
   n: number;
+}
+
+export interface VersionVector {
+  [replicaId: string]: number;
 }
